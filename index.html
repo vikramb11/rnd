@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="en">
 <head>
@@ -6,12 +7,27 @@
   <title>Clock + Stopwatch</title>
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+:root {
+      --clock-color: #ff3b30;      /* vivid red, readable on dark */
+      --sw-color: #00e5ff;         /* bright cyan, distinct from red */
+    }
     body { margin: 0; padding: 24px; background: #0b0f14; color: #e8eef6; }
     .wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 980px; margin: 0 auto; }
     .card { background: #121a24; border: 1px solid #223244; border-radius: 16px; padding: 18px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
     .title { font-size: 14px; opacity: .8; letter-spacing: .4px; margin-bottom: 10px; text-transform: uppercase; }
-    .big { font-variant-numeric: tabular-nums; font-size: clamp(42px, 6vw, 74px); line-height: 1.1; }
-    .big.large { font-size: clamp(64px, 9vw, 110px); }
+    .big { font-variant-numeric: tabular-nums; font-size: clamp(50px, 6.5vw, 86px); line-height: 1.1; }
+    .big.large { font-size: clamp(76px, 10vw, 128px); }
+.timebox{
+      background: #0f1620;
+      border: 2px solid #2b3d52;
+      border-radius: 14px;
+      padding: 14px 12px;
+      text-align: center;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    #clock { color: var(--clock-color); }
+    #sw { color: var(--sw-color); }
     .sub { margin-top: 6px; opacity: .85; font-variant-numeric: tabular-nums; }
     .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
     button {
@@ -35,7 +51,7 @@
     .pill input { transform: translateY(1px); }
     .status-ok { color: #a7f3d0; }
     .status-warn { color: #fde68a; }
-    @media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } }
+    @media (max-width: 760px) { body { padding: 14px; } .wrap { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -43,7 +59,7 @@
     <!-- CLOCK -->
     <div class="card">
       <div class="title">Current Time</div>
-      <div id="clock" class="big">--:--:--</div>
+      <div id="clock" class="big timebox">--:--:--</div>
       <div id="date" class="sub">---</div>
 
       <div class="row">
@@ -60,7 +76,7 @@
     <!-- STOPWATCH -->
     <div class="card">
       <div class="title">Stopwatch</div>
-      <div id="sw" class="big">00:00:00.000</div>
+      <div id="sw" class="big timebox">00:00:00.000</div>
       <div id="status" class="sub muted">Paused</div>
       <div id="startedAt" class="sub muted">Started at: —</div>
 
