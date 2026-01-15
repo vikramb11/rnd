@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Clock + Stopwatch</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; padding: 24px; background: #0b0f14; color: #e8eef6; }
+    .wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 980px; margin: 0 auto; }
+    .card { background: #121a24; border: 1px solid #223244; border-radius: 16px; padding: 18px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+    .title { font-size: 14px; opacity: .8; letter-spacing: .4px; margin-bottom: 10px; text-transform: uppercase; }
+    .big { font-variant-numeric: tabular-nums; font-size: clamp(42px, 6vw, 74px); line-height: 1.1; }
+    .big.large { font-size: clamp(64px, 9vw, 110px); }
+    .sub { margin-top: 6px; opacity: .85; font-variant-numeric: tabular-nums; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
+    button {
+      background: #0f1620; color: #e8eef6; border: 1px solid #2b3d52;
+      border-radius: 12px; padding: 10px 12px; font-size: 14px; cursor: pointer;
+    }
+    button:hover { border-color: #4b6a8f; }
+    .hint { margin-top: 10px; font-size: 13px; opacity: .75; }
+    .laps { margin-top: 14px; max-height: 240px; overflow: auto; padding-right: 6px; }
+    .lap {
+      display: flex; justify-content: space-between; gap: 10px;
+      padding: 10px 12px; border: 1px solid #223244; border-radius: 12px;
+      margin-bottom: 8px; background: #0f1620; font-variant-numeric: tabular-nums;
+    }
+    .muted { opacity: .75; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 8px 10px; border-radius: 999px; border: 1px solid #223244;
+      background: #0f1620; font-size: 13px;
+    }
+    .pill input { transform: translateY(1px); }
+    .status-ok { color: #a7f3d0; }
+    .status-warn { color: #fde68a; }
+    @media (max-width: 760px) { .wrap { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <!-- CLOCK -->
+    <div class="card">
+      <div class="title">Current Time</div>
+      <div id="clock" class="big">--:--:--</div>
+      <div id="date" class="sub">---</div>
+
+      <div class="row">
+        <button id="fullscreen">Full Screen</button>
+        <span class="pill">
+          <input id="largeDigits" type="checkbox" />
+          <label for="largeDigits">Large digits</label>
+        </span>
+      </div>
+
+      <div class="hint">Uses your system time (local timezone). Tip: Press <b>F11</b> in desktop browsers.</div>
+    </div>
+
+    <!-- STOPWATCH -->
+    <div class="card">
+      <div class="title">Stopwatch</div>
+      <div id="sw" class="big">00:00:00.000</div>
+      <div id="status" class="sub muted">Paused</div>
+      <div id="startedAt" class="sub muted">Started at: —</div>
+
+      <div class="row">
+        <button id="start">Start</button>
+        <button id="pause">Pause</button>
+        <button id="lap">Lap</button>
+        <button id="reset">Reset</button>
+        <button id="copy">Copy summary</button>
+      </div>
+
+      <div class="row">
+        <span class="pill">
+          <input id="keepAwake" type="checkbox" />
+          <label for="keepAwake">Keep screen awake</label>
+        </span>
+        <span id="awakeStatus" class="sub muted"></span>
+      </div>
+
+      <div class="hint">
+        Shortcuts (desktop): <b>Space</b> Start/Pause • <b>L</b> Lap • <b>R</b> Reset • <b>C</b> Copy
+      </div>
+
+      <div class="laps" id="laps"></div>
+    </div>
+  </div>
+
+  <script>
+    // -------- Helpers --------
+    function pad2(n) { return String(n).padStart(2, "0"); }
+    function pad3(n) { return String(n).padStart(3, "0"); }
+
+    function formatStopwatchMs(ms) {
+      ms = Math.max(0, ms);
+      var h = Math.floor(ms / 3600000);
+      var m = Math.floor((ms % 3600000) / 60000);
+      var s = Math.floor((ms % 60000) / 1000);
+      var milli = Math.floor(ms % 1000);
+      return pad2(h) + ":" + pad2(m) + ":" + pad2(s) + "." + pad3(milli);
+    }
+
+    // -------- CLOCK --------
+    function updateClock() {
+      var now = new Date();
+      document.getElementById("clock").textContent =
+        pad2(now.getHours()) + ":" + pad2(now.getMinutes()) + ":" + pad2(now.getSeconds());
+
+      document.getElementById("date").textContent = now.toLocaleDateString(undefined, {
+        weekday: "long", year: "numeric", month: "long", day: "numeric"
+      });
+    }
+    updateClock();
+    setInterval(updateClock, 250);
+
+    // -------- STOPWATCH --------
+    var running = false;
+    var startPerf = 0;      // performance.now() at start/resume
+    var elapsedMs = 0;      // accumulated elapsed time while paused
+    var rafId = null;
+
+    var swEl = document.getElementById("sw");
+    var statusEl = document.getElementById("status");
+    var lapsEl = document.getElementById("laps");
+
+    // Started-at capture (first ever start only; clears on reset)
+    var startedAtText = null;
+    var startedAtEl = document.getElementById("startedAt");
+
+    // Store lap values (ms) so summary can include them
+    var lapTimes = [];
+
+    function currentTotalMs() {
+      var now = (window.performance && performance.now) ? performance.now() : Date.now();
+      return running ? (elapsedMs + (now - startPerf)) : elapsedMs;
+    }
+
+    function render() {
+      var total = currentTotalMs();
+      swEl.textContent = formatStopwatchMs(total);
+      statusEl.textContent = running ? "Running" : "Paused";
+    }
+
+    function loop() {
+      if (!running) return;
+      render();
+      rafId = requestAnimationFrame(loop);
+    }
+
+    function start() {
+      if (running) return;
+
+      // Capture FIRST start time only
+      if (!startedAtText) {
+        var nowDate = new Date();
+        startedAtText =
+          pad2(nowDate.getHours()) + ":" + pad2(nowDate.getMinutes()) + ":" + pad2(nowDate.getSeconds()) +
+          " • " +
+          nowDate.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+        startedAtEl.textContent = "Started at: " + startedAtText;
+      }
+
+      running = true;
+      startPerf = (window.performance && performance.now) ? performance.now() : Date.now();
+      render();
+      rafId = requestAnimationFrame(loop);
+    }
+
+    function pause() {
+      if (!running) return;
+      running = false;
+
+      var now = (window.performance && performance.now) ? performance.now() : Date.now();
+      elapsedMs += (now - startPerf);
+      startPerf = 0;
+
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      render();
+    }
+
+    function reset() {
+      running = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+
+      startPerf = 0;
+      elapsedMs = 0;
+
+      // Clear started-at
+      startedAtText = null;
+      startedAtEl.textContent = "Started at: —";
+
+      // Clear laps
+      lapTimes = [];
+      lapsEl.innerHTML = "";
+
+      render();
+    }
+
+    function addLap() {
+      var total = currentTotalMs();
+      if (total <= 0) return;
+
+      lapTimes.unshift(total);
+
+      var lapNum = lapTimes.length;
+      var div = document.createElement("div");
+      div.className = "lap";
+      div.innerHTML = '<span class="muted">Lap ' + lapNum + '</span><span>' + formatStopwatchMs(total) + '</span>';
+      lapsEl.prepend(div);
+    }
+
+    async function copySummary() {
+      var total = currentTotalMs();
+      var lines = [];
+      lines.push("Stopwatch summary");
+      lines.push("Started at: " + (startedAtText ? startedAtText : "—"));
+      lines.push("Total: " + formatStopwatchMs(total));
+
+      if (lapTimes.length) {
+        lines.push("Laps:");
+        for (var i = lapTimes.length - 1; i >= 0; i--) {
+          lines.push("  Lap " + (i + 1) + ": " + formatStopwatchMs(lapTimes[i]));
+        }
+      } else {
+        lines.push("Laps: (none)");
+      }
+
+      var text = lines.join("\n");
+
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          statusEl.textContent = "Copied summary";
+          setTimeout(function(){ statusEl.textContent = running ? "Running" : "Paused"; }, 900);
+        } else {
+          // Fallback for older browsers: prompt
+          window.prompt("Copy this text:", text);
+        }
+      } catch (e) {
+        window.prompt("Copy this text:", text);
+      }
+    }
+
+    document.getElementById("start").addEventListener("click", start);
+    document.getElementById("pause").addEventListener("click", pause);
+    document.getElementById("reset").addEventListener("click", reset);
+    document.getElementById("lap").addEventListener("click", addLap);
+    document.getElementById("copy").addEventListener("click", copySummary);
+
+    // Keyboard shortcuts (desktop)
+    window.addEventListener("keydown", function(e) {
+      if (e.code === "Space") { e.preventDefault(); running ? pause() : start(); }
+      if (e.key === "l" || e.key === "L") addLap();
+      if (e.key === "r" || e.key === "R") reset();
+      if (e.key === "c" || e.key === "C") copySummary();
+    });
+
+    // -------- Full Screen --------
+    document.getElementById("fullscreen").addEventListener("click", function() {
+      var docEl = document.documentElement;
+      if (!document.fullscreenElement) {
+        if (docEl.requestFullscreen) docEl.requestFullscreen();
+      } else {
+        if (document.exitFullscreen) document.exitFullscreen();
+      }
+    });
+
+    // -------- Large Digits toggle --------
+    var largeToggle = document.getElementById("largeDigits");
+    largeToggle.addEventListener("change", function() {
+      var on = largeToggle.checked;
+      document.getElementById("clock").classList.toggle("large", on);
+      swEl.classList.toggle("large", on);
+    });
+
+    // -------- Keep Screen Awake (Wake Lock) --------
+    var wakeLock = null;
+    var keepAwakeToggle = document.getElementById("keepAwake");
+    var awakeStatusEl = document.getElementById("awakeStatus");
+
+    function setAwakeStatus(msg, kind) {
+      awakeStatusEl.textContent = msg;
+      awakeStatusEl.className = "sub " + (kind === "ok" ? "status-ok" : (kind === "warn" ? "status-warn" : "muted"));
+    }
+
+    async function enableWakeLock() {
+      try {
+        if (!("wakeLock" in navigator) || !navigator.wakeLock.request) {
+          setAwakeStatus("Wake Lock not supported on this browser.", "warn");
+          return;
+        }
+        wakeLock = await navigator.wakeLock.request("screen");
+        setAwakeStatus("Screen will stay awake (while this tab is active).", "ok");
+
+        wakeLock.addEventListener("release", function() {
+          if (keepAwakeToggle.checked) {
+            setAwakeStatus("Wake Lock released (tap toggle again).", "warn");
+          } else {
+            setAwakeStatus("", "");
+          }
+        });
+      } catch (err) {
+        setAwakeStatus("Wake Lock blocked (try full-screen or tap screen once).", "warn");
+      }
+    }
+
+    async function disableWakeLock() {
+      try {
+        if (wakeLock) {
+          await wakeLock.release();
+          wakeLock = null;
+        }
+      } catch (e) {}
+      setAwakeStatus("", "");
+    }
+
+    keepAwakeToggle.addEventListener("change", function() {
+      if (keepAwakeToggle.checked) enableWakeLock();
+      else disableWakeLock();
+    });
+
+    // If the page becomes hidden and then visible, Wake Lock often needs re-request
+    document.addEventListener("visibilitychange", function() {
+      if (document.visibilityState === "visible" && keepAwakeToggle.checked) {
+        // Try re-acquire
+        enableWakeLock();
+      }
+    });
+
+    // Initial paint
+    render();
+  </script>
+</body>
+</html>
